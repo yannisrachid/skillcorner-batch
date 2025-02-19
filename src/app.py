@@ -6,14 +6,12 @@ import pickle
 import os
 from datetime import datetime
 
-# Configuration des logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Configuration Redis
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 
@@ -35,14 +33,12 @@ def create_random_dataframe(size=1000):
 def load_data():
     """Charge les DataFrames dans Redis"""
     try:
-        # Connexion à Redis
         logger.info(f"Connection to Redis ({REDIS_HOST}:{REDIS_PORT})")
         redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
         redis_client.ping()
 
         logger.info("Loading cache data")
         
-        # Création et stockage des DataFrames
         for i in range(3):
             df = create_random_dataframe(size=1000)
             key = f"match_data_{i}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"            
