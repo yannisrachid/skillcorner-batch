@@ -1,0 +1,8 @@
+pandas
+requests
+redis
+selenium
+webdriver_manager
+pyvirtualdisplay
+xvfbwrapper
+numpy
