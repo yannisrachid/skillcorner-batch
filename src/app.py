@@ -1,54 +1,65 @@
-import pandas as pd
-import numpy as np
-import redis
 import logging
+import redis
 import pickle
 import os
-from datetime import datetime
+import pandas as pd
+from whoscored import get_matches_data, preprocess_events_df
+from helper import *
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 
-def create_random_dataframe(size=1000):
-    """Crée un DataFrame aléatoire avec des données de matchs"""
-    dates = pd.date_range(start='2024-01-01', periods=size, freq='D')
+def store_df_in_redis(redis_client, key, df):
+    """Stores a DataFrame in Redis"""
+    try:
+        pickled_data = pickle.dumps(df)
+        redis_client.set(key, pickled_data)
+        # redis_client.expire(key, 24 * 60 * 60)  # expire after 24h
+        logging.info(f"DataFrame stored in Redis with the key: {key}")
+    except Exception as e:
+        logging.error(f"Error storing in Redis: {str(e)}")
+        raise
     
-    data = {
-        'match_id': range(1, size + 1),
-        'date': dates,
-        'home_team': np.random.choice(['PSG', 'Lyon', 'Marseille'], size),
-        'away_team': np.random.choice(['Lens', 'Rennes', 'Nice'], size),
-        'home_score': np.random.randint(0, 5, size),
-        'away_score': np.random.randint(0, 5, size)
-    }
-    
-    return pd.DataFrame(data)
 
 def load_data():
-    """Charge les DataFrames dans Redis"""
-    try:
-        logger.info(f"Connection to Redis ({REDIS_HOST}:{REDIS_PORT})")
-        redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
-        redis_client.ping()
+    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
 
-        logger.info("Loading cache data")
+    logging.info("Start of batch job")
+    scraped_data = get_matches_data()
+    logging.info("Scraping done!")
+    logging.info("Starting data preprocessing...")
+
+    processed_games_info = []
+
+    for game_info, match_data in zip(scraped_data['games_info'].to_dict('records'), scraped_data['matches_data']):
+        game_id = game_info['game_id']
+        league = game_info['league']
+
+        logging.info(f"Starting preprocessing of game_id: {game_id}")
+
+        events_df = pd.DataFrame(match_data)
         
-        for i in range(3):
-            df = create_random_dataframe(size=1000)
-            key = f"match_data_{i}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"            
-            redis_client.set(key, pickle.dumps(df))
-            logger.info(f"DataFrame chargé dans Redis avec la clé: {key}")
+        processed_df = preprocess_events_df(
+            events_df,
+            league,
+            clubs_list,
+            clubs_ids
+        )
+        
+        game_info['game'] = processed_df.loc[0, 'game']
+        processed_games_info.append(game_info)
+        
+        store_df_in_redis(redis_client, f"game_data_{game_id}", processed_df)
+        logging.info(f"Processed game data {game_id} stored in Redis")
             
-    except Exception as e:
-        logger.error(f"Erreur: {str(e)}")
-        raise
+
+    games_df = pd.DataFrame(processed_games_info)
+    store_df_in_redis(redis_client, "games", games_df)
+    logging.info(f"List of processed games stored in Redis. Total: {len(processed_games_info)} games")
+        
 
 if __name__ == "__main__":
     load_data()
-    logger.info("Batch executed successfully")
+    logging.info("Batch executed successfully")
